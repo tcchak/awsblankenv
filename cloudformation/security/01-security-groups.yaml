@@ -40,7 +40,7 @@ Resources:
     Type: AWS::EC2::SecurityGroup
     Properties:
       GroupName: !Sub '${EnvironmentName}-sg-public'
-      GroupDescription: Public subnet EC2 / bastion — SSH from allowed CIDR
+      GroupDescription: Public subnet EC2 / bastion - SSH from allowed CIDR
       VpcId:
         Fn::ImportValue: !Sub '${EnvironmentName}-VpcId'
       SecurityGroupIngress:
@@ -65,7 +65,7 @@ Resources:
     Type: AWS::EC2::SecurityGroup
     Properties:
       GroupName: !Sub '${EnvironmentName}-sg-private'
-      GroupDescription: Private subnet EC2 — SSH only from public security group
+      GroupDescription: Private subnet EC2 - SSH only from public security group
       VpcId:
         Fn::ImportValue: !Sub '${EnvironmentName}-VpcId'
       SecurityGroupEgress:
