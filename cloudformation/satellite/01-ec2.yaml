@@ -64,9 +64,11 @@ Parameters:
       - t3.2xlarge
 
   AmiId:
-    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
-    Default: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64
-    Description: AMI ID or SSM parameter path resolving to an AMI
+    Type: AWS::EC2::Image::Id
+    Default: ami-0551e945da9a6e2de
+    Description: >
+      RHEL 9.x AMI ID. Default is RHEL 9.6 Cloud Access (Access2) GP3 in
+      ap-southeast-1 (ami-0551e945da9a6e2de).
 
   KeyName:
     Type: String
@@ -171,7 +173,7 @@ Resources:
       SecurityGroupIds:
         - !Ref SatelliteSecurityGroup
       BlockDeviceMappings:
-        - DeviceName: /dev/xvda
+        - DeviceName: /dev/sda1
           Ebs:
             VolumeSize: 30
             VolumeType: gp3
@@ -206,7 +208,7 @@ Resources:
     Properties:
       InstanceId: !Ref ConnectedSatellite
       VolumeId: !Ref ConnectedDataVolume
-      Device: /dev/xvdf
+      Device: /dev/sdf
 
   ConnectedElasticIP:
     Type: AWS::EC2::EIP
@@ -240,7 +242,7 @@ Resources:
       SecurityGroupIds:
         - !Ref SatelliteSecurityGroup
       BlockDeviceMappings:
-        - DeviceName: /dev/xvda
+        - DeviceName: /dev/sda1
           Ebs:
             VolumeSize: 30
             VolumeType: gp3
@@ -275,7 +277,7 @@ Resources:
     Properties:
       InstanceId: !Ref DisconnectedSatellite
       VolumeId: !Ref DisconnectedDataVolume
-      Device: /dev/xvdf
+      Device: /dev/sdf
 
   # ---------------------------------------------------------------------------
   # Route53 forward A records (existing public hosted zone)
