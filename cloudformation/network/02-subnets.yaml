@@ -1,0 +1,100 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  Creates two subnets in different Availability Zones within an existing VPC:
+  one public (auto-assign public IP) and one private. Imports VPC from the
+  network VPC stack exports.
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: Environment
+        Parameters:
+          - EnvironmentName
+      - Label:
+          default: Subnet CIDRs
+        Parameters:
+          - PublicSubnetCidr
+          - PrivateSubnetCidr
+    ParameterLabels:
+      EnvironmentName:
+        default: Environment name (must match VPC stack)
+      PublicSubnetCidr:
+        default: Public subnet CIDR
+      PrivateSubnetCidr:
+        default: Private subnet CIDR
+
+Parameters:
+  EnvironmentName:
+    Type: String
+    Default: blankenv
+    Description: Must match EnvironmentName used in the VPC stack
+    AllowedPattern: '^[a-zA-Z0-9-]+$'
+
+  PublicSubnetCidr:
+    Type: String
+    Default: 10.0.1.0/24
+    Description: IPv4 CIDR for the public subnet (first AZ)
+
+  PrivateSubnetCidr:
+    Type: String
+    Default: 10.0.2.0/24
+    Description: IPv4 CIDR for the private subnet (second AZ)
+
+Resources:
+  PublicSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId:
+        Fn::ImportValue: !Sub '${EnvironmentName}-VpcId'
+      AvailabilityZone: !Select [0, !GetAZs '']
+      CidrBlock: !Ref PublicSubnetCidr
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub '${EnvironmentName}-public-subnet'
+        - Key: Environment
+          Value: !Ref EnvironmentName
+        - Key: Tier
+          Value: public
+
+  PrivateSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId:
+        Fn::ImportValue: !Sub '${EnvironmentName}-VpcId'
+      AvailabilityZone: !Select [1, !GetAZs '']
+      CidrBlock: !Ref PrivateSubnetCidr
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: !Sub '${EnvironmentName}-private-subnet'
+        - Key: Environment
+          Value: !Ref EnvironmentName
+        - Key: Tier
+          Value: private
+
+Outputs:
+  PublicSubnetId:
+    Description: Public subnet ID (AZ 0)
+    Value: !Ref PublicSubnet
+    Export:
+      Name: !Sub '${EnvironmentName}-PublicSubnetId'
+
+  PrivateSubnetId:
+    Description: Private subnet ID (AZ 1)
+    Value: !Ref PrivateSubnet
+    Export:
+      Name: !Sub '${EnvironmentName}-PrivateSubnetId'
+
+  PublicSubnetAz:
+    Description: Availability Zone of the public subnet
+    Value: !GetAtt PublicSubnet.AvailabilityZone
+    Export:
+      Name: !Sub '${EnvironmentName}-PublicSubnetAz'
+
+  PrivateSubnetAz:
+    Description: Availability Zone of the private subnet
+    Value: !GetAtt PrivateSubnet.AvailabilityZone
+    Export:
+      Name: !Sub '${EnvironmentName}-PrivateSubnetAz'

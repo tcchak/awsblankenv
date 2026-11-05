@@ -1,0 +1,130 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  Configures public and private route tables. Public subnet routes 0.0.0.0/0
+  via the Internet Gateway. Private subnet routes 0.0.0.0/0 via a NAT Gateway
+  in the public subnet so future private EC2 instances can reach the internet
+  for updates without being publicly reachable.
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: Environment
+        Parameters:
+          - EnvironmentName
+    ParameterLabels:
+      EnvironmentName:
+        default: Environment name (must match prior stacks)
+
+Parameters:
+  EnvironmentName:
+    Type: String
+    Default: blankenv
+    Description: Must match EnvironmentName used in the VPC and subnet stacks
+    AllowedPattern: '^[a-zA-Z0-9-]+$'
+
+Resources:
+  # --- Public routing (IGW) ---
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId:
+        Fn::ImportValue: !Sub '${EnvironmentName}-VpcId'
+      Tags:
+        - Key: Name
+          Value: !Sub '${EnvironmentName}-public-rt'
+        - Key: Environment
+          Value: !Ref EnvironmentName
+        - Key: Tier
+          Value: public
+
+  DefaultPublicRoute:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId:
+        Fn::ImportValue: !Sub '${EnvironmentName}-InternetGatewayId'
+
+  PublicSubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId:
+        Fn::ImportValue: !Sub '${EnvironmentName}-PublicSubnetId'
+      RouteTableId: !Ref PublicRouteTable
+
+  # --- NAT for private subnet outbound ---
+  NatGatewayEip:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+      Tags:
+        - Key: Name
+          Value: !Sub '${EnvironmentName}-nat-eip'
+        - Key: Environment
+          Value: !Ref EnvironmentName
+
+  NatGateway:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt NatGatewayEip.AllocationId
+      SubnetId:
+        Fn::ImportValue: !Sub '${EnvironmentName}-PublicSubnetId'
+      Tags:
+        - Key: Name
+          Value: !Sub '${EnvironmentName}-nat'
+        - Key: Environment
+          Value: !Ref EnvironmentName
+
+  # --- Private routing (NAT) ---
+  PrivateRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId:
+        Fn::ImportValue: !Sub '${EnvironmentName}-VpcId'
+      Tags:
+        - Key: Name
+          Value: !Sub '${EnvironmentName}-private-rt'
+        - Key: Environment
+          Value: !Ref EnvironmentName
+        - Key: Tier
+          Value: private
+
+  DefaultPrivateRoute:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NatGateway
+
+  PrivateSubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId:
+        Fn::ImportValue: !Sub '${EnvironmentName}-PrivateSubnetId'
+      RouteTableId: !Ref PrivateRouteTable
+
+Outputs:
+  PublicRouteTableId:
+    Description: Public route table ID
+    Value: !Ref PublicRouteTable
+    Export:
+      Name: !Sub '${EnvironmentName}-PublicRouteTableId'
+
+  PrivateRouteTableId:
+    Description: Private route table ID
+    Value: !Ref PrivateRouteTable
+    Export:
+      Name: !Sub '${EnvironmentName}-PrivateRouteTableId'
+
+  NatGatewayId:
+    Description: NAT Gateway ID
+    Value: !Ref NatGateway
+    Export:
+      Name: !Sub '${EnvironmentName}-NatGatewayId'
+
+  NatGatewayPublicIp:
+    Description: Elastic IP address of the NAT Gateway
+    Value: !Ref NatGatewayEip
+    Export:
+      Name: !Sub '${EnvironmentName}-NatGatewayPublicIp'

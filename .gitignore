@@ -1,0 +1,25 @@
+# Credentials and local secrets — never commit
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+credentials
+credentials.json
+secrets.yml
+secrets.yaml
+aws-credentials*
+.aws/
+
+# OS / editor
+.DS_Store
+*.swp
+.idea/
+.vscode/
+
+# CloudFormation / deploy artifacts
+packaged-*.yaml
+packaged-*.yml
+*.zip
+.cdk.staging/
+cdk.out/

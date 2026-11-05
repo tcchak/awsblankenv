@@ -1,0 +1,105 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  Baseline security groups for future EC2 provisioning. Creates a public
+  (bastion/SSH) group and a private application group that only accepts
+  traffic from the public group within the VPC.
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: Environment
+        Parameters:
+          - EnvironmentName
+      - Label:
+          default: Access
+        Parameters:
+          - SshAllowedCidr
+    ParameterLabels:
+      EnvironmentName:
+        default: Environment name (must match VPC stack)
+      SshAllowedCidr:
+        default: CIDR allowed for SSH
+
+Parameters:
+  EnvironmentName:
+    Type: String
+    Default: blankenv
+    Description: Must match EnvironmentName used in the VPC stack
+    AllowedPattern: '^[a-zA-Z0-9-]+$'
+
+  SshAllowedCidr:
+    Type: String
+    Default: 0.0.0.0/0
+    Description: >
+      Source CIDR permitted to SSH into the public security group.
+      Tighten this (e.g. your office/VPN CIDR) before production use.
+
+Resources:
+  PublicSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: !Sub '${EnvironmentName}-sg-public'
+      GroupDescription: Public subnet EC2 / bastion — SSH from allowed CIDR
+      VpcId:
+        Fn::ImportValue: !Sub '${EnvironmentName}-VpcId'
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: !Ref SshAllowedCidr
+          Description: SSH
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+          Description: Allow all outbound
+      Tags:
+        - Key: Name
+          Value: !Sub '${EnvironmentName}-sg-public'
+        - Key: Environment
+          Value: !Ref EnvironmentName
+        - Key: Tier
+          Value: public
+
+  PrivateSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: !Sub '${EnvironmentName}-sg-private'
+      GroupDescription: Private subnet EC2 — SSH only from public security group
+      VpcId:
+        Fn::ImportValue: !Sub '${EnvironmentName}-VpcId'
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+          Description: Allow all outbound (via NAT)
+      Tags:
+        - Key: Name
+          Value: !Sub '${EnvironmentName}-sg-private'
+        - Key: Environment
+          Value: !Ref EnvironmentName
+        - Key: Tier
+          Value: private
+
+  # Separate ingress resource avoids circular dependency between the two SGs
+  PrivateSecurityGroupIngressFromPublic:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref PrivateSecurityGroup
+      IpProtocol: tcp
+      FromPort: 22
+      ToPort: 22
+      SourceSecurityGroupId: !Ref PublicSecurityGroup
+      Description: SSH from public / bastion security group
+
+Outputs:
+  PublicSecurityGroupId:
+    Description: Security group ID for public-subnet EC2 instances
+    Value: !Ref PublicSecurityGroup
+    Export:
+      Name: !Sub '${EnvironmentName}-PublicSecurityGroupId'
+
+  PrivateSecurityGroupId:
+    Description: Security group ID for private-subnet EC2 instances
+    Value: !Ref PrivateSecurityGroup
+    Export:
+      Name: !Sub '${EnvironmentName}-PrivateSecurityGroupId'
