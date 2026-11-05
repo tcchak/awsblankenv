@@ -1,0 +1,415 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  Disposable satellite compute stack. Creates 2x EC2 (8 vCPU / 32 GiB),
+  100 GiB data volumes, deployment-scoped security groups, an Elastic IP
+  for the connected (public) instance, Route53 A + PTR records, and a
+  private reverse hosted zone. Imports reusable VPC/subnet exports from
+  the blankenv network stacks. Deleting this stack removes only these
+  resources and leaves the shared VPC/IGW/subnets intact.
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: Environment
+        Parameters:
+          - EnvironmentName
+      - Label:
+          default: Instance
+        Parameters:
+          - InstanceType
+          - AmiId
+          - KeyName
+          - DataVolumeSize
+      - Label:
+          default: DNS
+        Parameters:
+          - HostedZoneId
+          - DomainName
+          - ConnectedHostname
+          - DisconnectedHostname
+    ParameterLabels:
+      EnvironmentName:
+        default: Environment name (must match network stack exports)
+      InstanceType:
+        default: Instance type (8 vCPU / 32 GiB)
+      AmiId:
+        default: AMI ID
+      KeyName:
+        default: Existing EC2 key pair name (optional)
+      DataVolumeSize:
+        default: Extra EBS size (GiB)
+      HostedZoneId:
+        default: Route53 public hosted zone ID
+      DomainName:
+        default: DNS domain (no trailing dot)
+      ConnectedHostname:
+        default: Connected satellite short hostname
+      DisconnectedHostname:
+        default: Disconnected satellite short hostname
+
+Parameters:
+  EnvironmentName:
+    Type: String
+    Default: blankenv
+    AllowedPattern: '^[a-zA-Z0-9-]+$'
+
+  InstanceType:
+    Type: String
+    Default: m5.2xlarge
+    Description: Must provide 8 vCPU and 32 GiB RAM (e.g. m5.2xlarge, m6i.2xlarge, t3.2xlarge)
+    AllowedValues:
+      - m5.2xlarge
+      - m6i.2xlarge
+      - t3.2xlarge
+
+  AmiId:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64
+    Description: AMI ID or SSM parameter path resolving to an AMI
+
+  KeyName:
+    Type: String
+    Default: ''
+    Description: >
+      Optional existing key pair name. Leave empty to create a new key pair
+      in this stack (private key stored in SSM Parameter Store).
+
+  DataVolumeSize:
+    Type: Number
+    Default: 100
+    MinValue: 1
+    Description: Size in GiB of the additional EBS volume attached to each instance
+
+  HostedZoneId:
+    Type: String
+    Default: Z1MDL14EQV30CO
+    Description: Existing public Route53 hosted zone for A records
+
+  DomainName:
+    Type: String
+    Default: sandbox699.opentlc.com
+    Description: DNS zone name without trailing dot
+
+  ConnectedHostname:
+    Type: String
+    Default: connected-satellite
+    AllowedPattern: '^[a-z0-9-]+$'
+
+  DisconnectedHostname:
+    Type: String
+    Default: disconnected-satellite
+    AllowedPattern: '^[a-z0-9-]+$'
+
+Conditions:
+  CreateKeyPair: !Equals [!Ref KeyName, '']
+
+Resources:
+  # ---------------------------------------------------------------------------
+  # Key pair (only when KeyName is empty)
+  # ---------------------------------------------------------------------------
+  SatelliteKeyPair:
+    Type: AWS::EC2::KeyPair
+    Condition: CreateKeyPair
+    Properties:
+      KeyName: !Sub '${EnvironmentName}-satellite-key'
+      Tags:
+        - Key: Name
+          Value: !Sub '${EnvironmentName}-satellite-key'
+        - Key: Environment
+          Value: !Ref EnvironmentName
+        - Key: Deployment
+          Value: satellite
+
+  # ---------------------------------------------------------------------------
+  # Security group — scoped to this stack (deleted with the stack)
+  # ---------------------------------------------------------------------------
+  SatelliteSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Satellite EC2 - SSH from anywhere; all traffic between members
+      VpcId:
+        Fn::ImportValue: !Sub '${EnvironmentName}-VpcId'
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+          Description: SSH from anywhere
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+          Description: Allow all outbound
+      Tags:
+        - Key: Name
+          Value: !Sub '${EnvironmentName}-sg-satellite'
+        - Key: Environment
+          Value: !Ref EnvironmentName
+        - Key: Deployment
+          Value: satellite
+
+  # Self-reference: allow all protocols between instances sharing this SG
+  SatelliteSecurityGroupAllFromSelf:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref SatelliteSecurityGroup
+      IpProtocol: -1
+      SourceSecurityGroupId: !Ref SatelliteSecurityGroup
+      Description: All traffic between satellite EC2 instances
+
+  # ---------------------------------------------------------------------------
+  # Connected satellite — public subnet + IGW path + Elastic IP
+  # ---------------------------------------------------------------------------
+  ConnectedSatellite:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: !Ref InstanceType
+      ImageId: !Ref AmiId
+      KeyName: !If [CreateKeyPair, !Ref SatelliteKeyPair, !Ref KeyName]
+      SubnetId:
+        Fn::ImportValue: !Sub '${EnvironmentName}-PublicSubnetId'
+      SecurityGroupIds:
+        - !Ref SatelliteSecurityGroup
+      BlockDeviceMappings:
+        - DeviceName: /dev/xvda
+          Ebs:
+            VolumeSize: 30
+            VolumeType: gp3
+            DeleteOnTermination: true
+      Tags:
+        - Key: Name
+          Value: connected-satellite
+        - Key: Environment
+          Value: !Ref EnvironmentName
+        - Key: Deployment
+          Value: satellite
+        - Key: Role
+          Value: connected
+
+  ConnectedDataVolume:
+    Type: AWS::EC2::Volume
+    Properties:
+      AvailabilityZone: !GetAtt ConnectedSatellite.AvailabilityZone
+      Size: !Ref DataVolumeSize
+      VolumeType: gp3
+      Encrypted: true
+      Tags:
+        - Key: Name
+          Value: connected-satellite-data
+        - Key: Environment
+          Value: !Ref EnvironmentName
+        - Key: Deployment
+          Value: satellite
+
+  ConnectedDataVolumeAttachment:
+    Type: AWS::EC2::VolumeAttachment
+    Properties:
+      InstanceId: !Ref ConnectedSatellite
+      VolumeId: !Ref ConnectedDataVolume
+      Device: /dev/xvdf
+
+  ConnectedElasticIP:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+      Tags:
+        - Key: Name
+          Value: connected-satellite-eip
+        - Key: Environment
+          Value: !Ref EnvironmentName
+        - Key: Deployment
+          Value: satellite
+
+  ConnectedElasticIPAssociation:
+    Type: AWS::EC2::EIPAssociation
+    Properties:
+      InstanceId: !Ref ConnectedSatellite
+      AllocationId: !GetAtt ConnectedElasticIP.AllocationId
+
+  # ---------------------------------------------------------------------------
+  # Disconnected satellite — private subnet (no IGW route)
+  # ---------------------------------------------------------------------------
+  DisconnectedSatellite:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: !Ref InstanceType
+      ImageId: !Ref AmiId
+      KeyName: !If [CreateKeyPair, !Ref SatelliteKeyPair, !Ref KeyName]
+      SubnetId:
+        Fn::ImportValue: !Sub '${EnvironmentName}-PrivateSubnetId'
+      SecurityGroupIds:
+        - !Ref SatelliteSecurityGroup
+      BlockDeviceMappings:
+        - DeviceName: /dev/xvda
+          Ebs:
+            VolumeSize: 30
+            VolumeType: gp3
+            DeleteOnTermination: true
+      Tags:
+        - Key: Name
+          Value: disconnected-satellite
+        - Key: Environment
+          Value: !Ref EnvironmentName
+        - Key: Deployment
+          Value: satellite
+        - Key: Role
+          Value: disconnected
+
+  DisconnectedDataVolume:
+    Type: AWS::EC2::Volume
+    Properties:
+      AvailabilityZone: !GetAtt DisconnectedSatellite.AvailabilityZone
+      Size: !Ref DataVolumeSize
+      VolumeType: gp3
+      Encrypted: true
+      Tags:
+        - Key: Name
+          Value: disconnected-satellite-data
+        - Key: Environment
+          Value: !Ref EnvironmentName
+        - Key: Deployment
+          Value: satellite
+
+  DisconnectedDataVolumeAttachment:
+    Type: AWS::EC2::VolumeAttachment
+    Properties:
+      InstanceId: !Ref DisconnectedSatellite
+      VolumeId: !Ref DisconnectedDataVolume
+      Device: /dev/xvdf
+
+  # ---------------------------------------------------------------------------
+  # Route53 forward A records (existing public hosted zone)
+  # ---------------------------------------------------------------------------
+  ConnectedARecord:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      HostedZoneId: !Ref HostedZoneId
+      Name: !Sub '${ConnectedHostname}.${DomainName}.'
+      Type: A
+      TTL: 60
+      ResourceRecords:
+        - !Ref ConnectedElasticIP
+
+  DisconnectedARecord:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      HostedZoneId: !Ref HostedZoneId
+      Name: !Sub '${DisconnectedHostname}.${DomainName}.'
+      Type: A
+      TTL: 60
+      ResourceRecords:
+        - !GetAtt DisconnectedSatellite.PrivateIp
+
+  # ---------------------------------------------------------------------------
+  # Private reverse zone + PTR records (VPC-scoped; deleted with this stack)
+  # Zone covers 10.0.0.0/16 -> 0.10.in-addr.arpa
+  # ---------------------------------------------------------------------------
+  ReverseHostedZone:
+    Type: AWS::Route53::HostedZone
+    Properties:
+      Name: 0.10.in-addr.arpa.
+      VPCs:
+        - VPCId:
+            Fn::ImportValue: !Sub '${EnvironmentName}-VpcId'
+          VPCRegion: !Ref AWS::Region
+      HostedZoneConfig:
+        Comment: !Sub 'Reverse DNS for ${EnvironmentName} satellite deployment'
+      HostedZoneTags:
+        - Key: Name
+          Value: !Sub '${EnvironmentName}-satellite-reverse'
+        - Key: Environment
+          Value: !Ref EnvironmentName
+        - Key: Deployment
+          Value: satellite
+
+  ConnectedPtrRecord:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      HostedZoneId: !Ref ReverseHostedZone
+      Name: !Join
+        - .
+        - - !Select [3, !Split ['.', !GetAtt ConnectedSatellite.PrivateIp]]
+          - !Select [2, !Split ['.', !GetAtt ConnectedSatellite.PrivateIp]]
+          - !Select [1, !Split ['.', !GetAtt ConnectedSatellite.PrivateIp]]
+          - !Select [0, !Split ['.', !GetAtt ConnectedSatellite.PrivateIp]]
+          - in-addr.arpa.
+      Type: PTR
+      TTL: 60
+      ResourceRecords:
+        - !Sub '${ConnectedHostname}.${DomainName}.'
+
+  DisconnectedPtrRecord:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      HostedZoneId: !Ref ReverseHostedZone
+      Name: !Join
+        - .
+        - - !Select [3, !Split ['.', !GetAtt DisconnectedSatellite.PrivateIp]]
+          - !Select [2, !Split ['.', !GetAtt DisconnectedSatellite.PrivateIp]]
+          - !Select [1, !Split ['.', !GetAtt DisconnectedSatellite.PrivateIp]]
+          - !Select [0, !Split ['.', !GetAtt DisconnectedSatellite.PrivateIp]]
+          - in-addr.arpa.
+      Type: PTR
+      TTL: 60
+      ResourceRecords:
+        - !Sub '${DisconnectedHostname}.${DomainName}.'
+
+Outputs:
+  ConnectedInstanceId:
+    Description: Connected satellite EC2 instance ID
+    Value: !Ref ConnectedSatellite
+    Export:
+      Name: !Sub '${EnvironmentName}-ConnectedSatelliteInstanceId'
+
+  DisconnectedInstanceId:
+    Description: Disconnected satellite EC2 instance ID
+    Value: !Ref DisconnectedSatellite
+    Export:
+      Name: !Sub '${EnvironmentName}-DisconnectedSatelliteInstanceId'
+
+  ConnectedPublicIp:
+    Description: Elastic IP of connected satellite
+    Value: !Ref ConnectedElasticIP
+    Export:
+      Name: !Sub '${EnvironmentName}-ConnectedSatellitePublicIp'
+
+  ConnectedPrivateIp:
+    Description: Private IP of connected satellite
+    Value: !GetAtt ConnectedSatellite.PrivateIp
+
+  DisconnectedPrivateIp:
+    Description: Private IP of disconnected satellite
+    Value: !GetAtt DisconnectedSatellite.PrivateIp
+    Export:
+      Name: !Sub '${EnvironmentName}-DisconnectedSatellitePrivateIp'
+
+  ConnectedFqdn:
+    Description: Connected satellite FQDN (A record)
+    Value: !Sub '${ConnectedHostname}.${DomainName}'
+    Export:
+      Name: !Sub '${EnvironmentName}-ConnectedSatelliteFqdn'
+
+  DisconnectedFqdn:
+    Description: Disconnected satellite FQDN (A record)
+    Value: !Sub '${DisconnectedHostname}.${DomainName}'
+    Export:
+      Name: !Sub '${EnvironmentName}-DisconnectedSatelliteFqdn'
+
+  SatelliteSecurityGroupId:
+    Description: Security group ID for this satellite deployment
+    Value: !Ref SatelliteSecurityGroup
+    Export:
+      Name: !Sub '${EnvironmentName}-SatelliteSecurityGroupId'
+
+  KeyPairName:
+    Description: Key pair used by both instances
+    Value: !If [CreateKeyPair, !Ref SatelliteKeyPair, !Ref KeyName]
+
+  KeyPairId:
+    Condition: CreateKeyPair
+    Description: Key pair ID (private key in SSM at /ec2/keypair/<KeyPairId>)
+    Value: !GetAtt SatelliteKeyPair.KeyPairId
+
+  ReverseHostedZoneId:
+    Description: Private reverse hosted zone for PTR records
+    Value: !Ref ReverseHostedZone

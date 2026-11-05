@@ -1,0 +1,30 @@
+[
+  {
+    "ParameterKey": "EnvironmentName",
+    "ParameterValue": "blankenv"
+  },
+  {
+    "ParameterKey": "InstanceType",
+    "ParameterValue": "m5.2xlarge"
+  },
+  {
+    "ParameterKey": "DataVolumeSize",
+    "ParameterValue": "100"
+  },
+  {
+    "ParameterKey": "HostedZoneId",
+    "ParameterValue": "Z1MDL14EQV30CO"
+  },
+  {
+    "ParameterKey": "DomainName",
+    "ParameterValue": "sandbox699.opentlc.com"
+  },
+  {
+    "ParameterKey": "ConnectedHostname",
+    "ParameterValue": "connected-satellite"
+  },
+  {
+    "ParameterKey": "DisconnectedHostname",
+    "ParameterValue": "disconnected-satellite"
+  }
+]
