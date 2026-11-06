@@ -1,10 +1,10 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Description: >
-  Disposable satellite compute stack. Creates 2x EC2 (8 vCPU / 32 GiB),
-  100 GiB data volumes, deployment-scoped security groups, an Elastic IP
-  for the connected (public) instance, Route53 A + PTR records, and a
-  private reverse hosted zone. Imports reusable VPC/subnet exports from
-  the blankenv network stacks. Deleting this stack removes only these
+  Disposable satellite compute stack. Creates 2x EC2 (8 vCPU / 32 GiB)
+  with 200 GiB root EBS volumes, deployment-scoped security groups, an
+  Elastic IP for the connected (public) instance, Route53 A + PTR records,
+  and a private reverse hosted zone. Imports reusable VPC/subnet exports
+  from the blankenv network stacks. Deleting this stack removes only these
   resources and leaves the shared VPC/IGW/subnets intact.
 
 Metadata:
@@ -20,7 +20,7 @@ Metadata:
           - InstanceType
           - AmiId
           - KeyName
-          - DataVolumeSize
+          - RootVolumeSize
       - Label:
           default: DNS
         Parameters:
@@ -37,8 +37,8 @@ Metadata:
         default: AMI ID
       KeyName:
         default: Existing EC2 key pair name (optional)
-      DataVolumeSize:
-        default: Extra EBS size (GiB)
+      RootVolumeSize:
+        default: Root EBS size (GiB)
       HostedZoneId:
         default: Route53 public hosted zone ID
       DomainName:
@@ -77,11 +77,11 @@ Parameters:
       Optional existing key pair name. Leave empty to create a new key pair
       in this stack (private key stored in SSM Parameter Store).
 
-  DataVolumeSize:
+  RootVolumeSize:
     Type: Number
-    Default: 100
-    MinValue: 1
-    Description: Size in GiB of the additional EBS volume attached to each instance
+    Default: 200
+    MinValue: 30
+    Description: Size in GiB of the root EBS volume for each instance
 
   HostedZoneId:
     Type: String
@@ -175,7 +175,7 @@ Resources:
       BlockDeviceMappings:
         - DeviceName: /dev/sda1
           Ebs:
-            VolumeSize: 30
+            VolumeSize: !Ref RootVolumeSize
             VolumeType: gp3
             DeleteOnTermination: true
       Tags:
@@ -187,28 +187,6 @@ Resources:
           Value: satellite
         - Key: Role
           Value: connected
-
-  ConnectedDataVolume:
-    Type: AWS::EC2::Volume
-    Properties:
-      AvailabilityZone: !GetAtt ConnectedSatellite.AvailabilityZone
-      Size: !Ref DataVolumeSize
-      VolumeType: gp3
-      Encrypted: true
-      Tags:
-        - Key: Name
-          Value: connected-satellite-data
-        - Key: Environment
-          Value: !Ref EnvironmentName
-        - Key: Deployment
-          Value: satellite
-
-  ConnectedDataVolumeAttachment:
-    Type: AWS::EC2::VolumeAttachment
-    Properties:
-      InstanceId: !Ref ConnectedSatellite
-      VolumeId: !Ref ConnectedDataVolume
-      Device: /dev/sdf
 
   ConnectedElasticIP:
     Type: AWS::EC2::EIP
@@ -244,7 +222,7 @@ Resources:
       BlockDeviceMappings:
         - DeviceName: /dev/sda1
           Ebs:
-            VolumeSize: 30
+            VolumeSize: !Ref RootVolumeSize
             VolumeType: gp3
             DeleteOnTermination: true
       Tags:
@@ -256,28 +234,6 @@ Resources:
           Value: satellite
         - Key: Role
           Value: disconnected
-
-  DisconnectedDataVolume:
-    Type: AWS::EC2::Volume
-    Properties:
-      AvailabilityZone: !GetAtt DisconnectedSatellite.AvailabilityZone
-      Size: !Ref DataVolumeSize
-      VolumeType: gp3
-      Encrypted: true
-      Tags:
-        - Key: Name
-          Value: disconnected-satellite-data
-        - Key: Environment
-          Value: !Ref EnvironmentName
-        - Key: Deployment
-          Value: satellite
-
-  DisconnectedDataVolumeAttachment:
-    Type: AWS::EC2::VolumeAttachment
-    Properties:
-      InstanceId: !Ref DisconnectedSatellite
-      VolumeId: !Ref DisconnectedDataVolume
-      Device: /dev/sdf
 
   # ---------------------------------------------------------------------------
   # Route53 forward A records (existing public hosted zone)

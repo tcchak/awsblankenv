@@ -12,8 +12,8 @@
     "ParameterValue": "ami-0551e945da9a6e2de"
   },
   {
-    "ParameterKey": "DataVolumeSize",
-    "ParameterValue": "100"
+    "ParameterKey": "RootVolumeSize",
+    "ParameterValue": "200"
   },
   {
     "ParameterKey": "HostedZoneId",
