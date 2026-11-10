@@ -42,8 +42,7 @@ Stacks share values via CloudFormation **Exports / Imports** keyed by `Environme
 - **connected-satellite** — RHEL 9.6, `m5.2xlarge` (8 vCPU / 32 GiB), public subnet, Elastic IP (IGW path), 200 GiB root gp3 EBS
 - **disconnected-satellite** — RHEL 9.6, same size, private subnet (no IGW route), 200 GiB root gp3 EBS
 - Default AMI: `ami-0551e945da9a6e2de` (RHEL-9.6.0 Access2 GP3, ap-southeast-1)
-- **Security group** (stack-scoped): TCP/22 and TCP/443 from `0.0.0.0/0`, all traffic between both instances
-- **HTTPS service**: `scripts/enable-https.sh` installs `httpd` + `mod_ssl` (self-signed) on both hosts
+- **Security group** (stack-scoped): TCP/22 and TCP/443 from `0.0.0.0/0`, all traffic between both instances (port only; no HTTPS app installed by this stack)
 - **Route53 A** in hosted zone `Z1MDL14EQV30CO` / `sandbox699.opentlc.com`
 - **Route53 PTR** in a private reverse zone `0.10.in-addr.arpa` associated with the VPC
 - Optional auto-created key pair (SSM private key) when `KeyName` is empty
