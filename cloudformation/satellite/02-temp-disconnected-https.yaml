@@ -1,0 +1,98 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  TEMPORARY public HTTPS access for disconnected-satellite.
+  Creates a public subnet in the disconnected instance AZ, a secondary ENI
+  with an Elastic IP, and attaches it to the disconnected EC2.
+  Delete this stack to revoke public access (also restore Route53 A to private IP).
+
+Parameters:
+  EnvironmentName:
+    Type: String
+    Default: blankenv
+  TempPublicSubnetCidr:
+    Type: String
+    Default: 10.0.3.0/24
+    Description: CIDR for temporary public subnet in the disconnected AZ
+  DisconnectedInstanceId:
+    Type: String
+    Description: EC2 instance ID of disconnected-satellite
+  SatelliteSecurityGroupId:
+    Type: String
+    Description: Security group already used by satellite instances
+
+Resources:
+  TempPublicSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId:
+        Fn::ImportValue: !Sub '${EnvironmentName}-VpcId'
+      AvailabilityZone: !Select [1, !GetAZs '']
+      CidrBlock: !Ref TempPublicSubnetCidr
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: !Sub '${EnvironmentName}-temp-public-1b'
+        - Key: Environment
+          Value: !Ref EnvironmentName
+        - Key: Temporary
+          Value: 'true'
+        - Key: Purpose
+          Value: disconnected-https-access
+
+  TempPublicSubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref TempPublicSubnet
+      RouteTableId:
+        Fn::ImportValue: !Sub '${EnvironmentName}-PublicRouteTableId'
+
+  TempNetworkInterface:
+    Type: AWS::EC2::NetworkInterface
+    Properties:
+      SubnetId: !Ref TempPublicSubnet
+      GroupSet:
+        - !Ref SatelliteSecurityGroupId
+      SourceDestCheck: true
+      Description: Temporary public ENI for disconnected-satellite HTTPS
+      Tags:
+        - Key: Name
+          Value: !Sub '${EnvironmentName}-disc-temp-eni'
+        - Key: Temporary
+          Value: 'true'
+
+  TempElasticIP:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+      Tags:
+        - Key: Name
+          Value: !Sub '${EnvironmentName}-disc-temp-eip'
+        - Key: Temporary
+          Value: 'true'
+
+  TempEIPAssociation:
+    Type: AWS::EC2::EIPAssociation
+    Properties:
+      AllocationId: !GetAtt TempElasticIP.AllocationId
+      NetworkInterfaceId: !Ref TempNetworkInterface
+
+  TempENIAttachment:
+    Type: AWS::EC2::NetworkInterfaceAttachment
+    Properties:
+      InstanceId: !Ref DisconnectedInstanceId
+      NetworkInterfaceId: !Ref TempNetworkInterface
+      DeviceIndex: 1
+      DeleteOnTermination: true
+
+Outputs:
+  TempPublicIp:
+    Description: Temporary public IP for disconnected-satellite HTTPS
+    Value: !Ref TempElasticIP
+    Export:
+      Name: !Sub '${EnvironmentName}-DisconnectedTempPublicIp'
+  TempNetworkInterfaceId:
+    Description: Temporary ENI ID
+    Value: !Ref TempNetworkInterface
+  TempPublicSubnetId:
+    Description: Temporary public subnet ID
+    Value: !Ref TempPublicSubnet

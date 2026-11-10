@@ -90,3 +90,17 @@ aws cloudformation deploy --stack-name blankenv-satellite \
 **Network:** `blankenv-VpcId`, `blankenv-PublicSubnetId`, `blankenv-PrivateSubnetId`, `blankenv-InternetGatewayId`, `blankenv-NatGatewayId`
 
 **Satellite:** `blankenv-ConnectedSatellitePublicIp`, `blankenv-ConnectedSatelliteFqdn`, `blankenv-DisconnectedSatelliteFqdn`, `blankenv-SatelliteSecurityGroupId`
+
+## Temporary public HTTPS for disconnected-satellite
+
+Disposable stack `blankenv-disc-temp-https` attaches a secondary ENI + Elastic IP in a temporary public subnet (same AZ as disconnected) and the Route53 A record for `disconnected-satellite.sandbox699.opentlc.com` is pointed at that EIP.
+
+**Revoke when done:**
+
+```bash
+# restore private A record
+PRIV=$(cat .ssh-local/disconnected-private-ip.txt)  # or current private IP
+aws route53 change-resource-record-sets --hosted-zone-id Z1MDL14EQV30CO --change-batch "{\"Changes\":[{\"Action\":\"UPSERT\",\"ResourceRecordSet\":{\"Name\":\"disconnected-satellite.sandbox699.opentlc.com.\",\"Type\":\"A\",\"TTL\":60,\"ResourceRecords\":[{\"Value\":\"${PRIV}\"}]}}]}"
+
+aws cloudformation delete-stack --stack-name blankenv-disc-temp-https --region ap-southeast-1
+```
