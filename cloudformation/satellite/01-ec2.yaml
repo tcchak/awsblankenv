@@ -1,11 +1,12 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Description: >
-  Disposable satellite compute stack. Creates 2x EC2 (8 vCPU / 32 GiB)
-  with 200 GiB root EBS volumes, deployment-scoped security groups, an
-  Elastic IP for the connected (public) instance, Route53 A + PTR records,
-  and a private reverse hosted zone. Imports reusable VPC/subnet exports
-  from the blankenv network stacks. Deleting this stack removes only these
-  resources and leaves the shared VPC/IGW/subnets intact.
+  Disposable satellite compute stack. Creates 3x EC2 (8 vCPU / 32 GiB)
+  with 200 GiB root EBS volumes: connected + node3 in the public subnet
+  (IGW/EIP), disconnected in the private subnet, plus deployment-scoped
+  security groups, Route53 A + PTR records, and a private reverse hosted
+  zone. Imports reusable VPC/subnet exports from the blankenv network
+  stacks. Deleting this stack removes only these resources and leaves the
+  shared VPC/IGW/subnets intact.
 
 Metadata:
   AWS::CloudFormation::Interface:
@@ -28,6 +29,7 @@ Metadata:
           - DomainName
           - ConnectedHostname
           - DisconnectedHostname
+          - ThirdHostname
     ParameterLabels:
       EnvironmentName:
         default: Environment name (must match network stack exports)
@@ -47,6 +49,8 @@ Metadata:
         default: Connected satellite short hostname
       DisconnectedHostname:
         default: Disconnected satellite short hostname
+      ThirdHostname:
+        default: Third server short hostname (public subnet)
 
 Parameters:
   EnvironmentName:
@@ -102,6 +106,12 @@ Parameters:
     Type: String
     Default: disconnected-satellite
     AllowedPattern: '^[a-z0-9-]+$'
+
+  ThirdHostname:
+    Type: String
+    Default: satellite-node3
+    AllowedPattern: '^[a-z0-9-]+$'
+    Description: Third RHEL host in the same public subnet as connected-satellite
 
 Conditions:
   CreateKeyPair: !Equals [!Ref KeyName, '']
@@ -212,6 +222,53 @@ Resources:
       AllocationId: !GetAtt ConnectedElasticIP.AllocationId
 
   # ---------------------------------------------------------------------------
+  # Third server — same public subnet / specs as connected satellite
+  # ---------------------------------------------------------------------------
+  ThirdSatellite:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: !Ref InstanceType
+      ImageId: !Ref AmiId
+      KeyName: !If [CreateKeyPair, !Ref SatelliteKeyPair, !Ref KeyName]
+      SubnetId:
+        Fn::ImportValue: !Sub '${EnvironmentName}-PublicSubnetId'
+      SecurityGroupIds:
+        - !Ref SatelliteSecurityGroup
+      BlockDeviceMappings:
+        - DeviceName: /dev/sda1
+          Ebs:
+            VolumeSize: !Ref RootVolumeSize
+            VolumeType: gp3
+            DeleteOnTermination: true
+      Tags:
+        - Key: Name
+          Value: !Ref ThirdHostname
+        - Key: Environment
+          Value: !Ref EnvironmentName
+        - Key: Deployment
+          Value: satellite
+        - Key: Role
+          Value: node3
+
+  ThirdElasticIP:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+      Tags:
+        - Key: Name
+          Value: !Sub '${ThirdHostname}-eip'
+        - Key: Environment
+          Value: !Ref EnvironmentName
+        - Key: Deployment
+          Value: satellite
+
+  ThirdElasticIPAssociation:
+    Type: AWS::EC2::EIPAssociation
+    Properties:
+      InstanceId: !Ref ThirdSatellite
+      AllocationId: !GetAtt ThirdElasticIP.AllocationId
+
+  # ---------------------------------------------------------------------------
   # Disconnected satellite — private subnet (no IGW route)
   # ---------------------------------------------------------------------------
   DisconnectedSatellite:
@@ -262,6 +319,16 @@ Resources:
       TTL: 60
       ResourceRecords:
         - !GetAtt DisconnectedSatellite.PrivateIp
+
+  ThirdARecord:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      HostedZoneId: !Ref HostedZoneId
+      Name: !Sub '${ThirdHostname}.${DomainName}.'
+      Type: A
+      TTL: 60
+      ResourceRecords:
+        - !Ref ThirdElasticIP
 
   # ---------------------------------------------------------------------------
   # Private reverse zone + PTR records (VPC-scoped; deleted with this stack)
@@ -317,6 +384,22 @@ Resources:
       ResourceRecords:
         - !Sub '${DisconnectedHostname}.${DomainName}.'
 
+  ThirdPtrRecord:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      HostedZoneId: !Ref ReverseHostedZone
+      Name: !Join
+        - .
+        - - !Select [3, !Split ['.', !GetAtt ThirdSatellite.PrivateIp]]
+          - !Select [2, !Split ['.', !GetAtt ThirdSatellite.PrivateIp]]
+          - !Select [1, !Split ['.', !GetAtt ThirdSatellite.PrivateIp]]
+          - !Select [0, !Split ['.', !GetAtt ThirdSatellite.PrivateIp]]
+          - in-addr.arpa.
+      Type: PTR
+      TTL: 60
+      ResourceRecords:
+        - !Sub '${ThirdHostname}.${DomainName}.'
+
 Outputs:
   ConnectedInstanceId:
     Description: Connected satellite EC2 instance ID
@@ -357,6 +440,28 @@ Outputs:
     Value: !Sub '${DisconnectedHostname}.${DomainName}'
     Export:
       Name: !Sub '${EnvironmentName}-DisconnectedSatelliteFqdn'
+
+  ThirdInstanceId:
+    Description: Third server EC2 instance ID (public subnet)
+    Value: !Ref ThirdSatellite
+    Export:
+      Name: !Sub '${EnvironmentName}-ThirdSatelliteInstanceId'
+
+  ThirdPublicIp:
+    Description: Elastic IP of third server
+    Value: !Ref ThirdElasticIP
+    Export:
+      Name: !Sub '${EnvironmentName}-ThirdSatellitePublicIp'
+
+  ThirdPrivateIp:
+    Description: Private IP of third server
+    Value: !GetAtt ThirdSatellite.PrivateIp
+
+  ThirdFqdn:
+    Description: Third server FQDN (A record)
+    Value: !Sub '${ThirdHostname}.${DomainName}'
+    Export:
+      Name: !Sub '${EnvironmentName}-ThirdSatelliteFqdn'
 
   SatelliteSecurityGroupId:
     Description: Security group ID for this satellite deployment

@@ -30,5 +30,9 @@
   {
     "ParameterKey": "DisconnectedHostname",
     "ParameterValue": "disconnected-satellite"
+  },
+  {
+    "ParameterKey": "ThirdHostname",
+    "ParameterValue": "satellite-node3"
   }
 ]

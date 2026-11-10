@@ -15,7 +15,7 @@ cloudformation/
   security/                # REUSABLE baseline SGs (optional for other apps)
     01-security-groups.yaml
   satellite/               # DISPOSABLE — delete without touching network
-    01-ec2.yaml            # 2x EC2, EBS, EIP, SGs, Route53 A+PTR
+    01-ec2.yaml            # 3x EC2, EBS, EIP, SGs, Route53 A+PTR
 parameters/
 ```
 
@@ -40,6 +40,7 @@ Stacks share values via CloudFormation **Exports / Imports** keyed by `Environme
 `cloudformation/satellite/01-ec2.yaml` creates:
 
 - **connected-satellite** — RHEL 9.6, `m5.2xlarge` (8 vCPU / 32 GiB), public subnet, Elastic IP (IGW path), 200 GiB root gp3 EBS
+- **satellite-node3** — same specs as connected, same public subnet + Elastic IP
 - **disconnected-satellite** — RHEL 9.6, same size, private subnet (no IGW route), 200 GiB root gp3 EBS
 - Default AMI: `ami-0551e945da9a6e2de` (RHEL-9.6.0 Access2 GP3, ap-southeast-1)
 - **Security group** (stack-scoped): TCP/22 and TCP/443 from `0.0.0.0/0`, all traffic between both instances (port only; no HTTPS app installed by this stack)
